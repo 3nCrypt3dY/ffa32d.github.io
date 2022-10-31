@@ -1,0 +1,144 @@
+css {
+  .social {
+    display: block;
+    position: relative;
+    padding-bottom: 100%;
+    background-color: white;
+    border-radius: 15%;
+    box-sizing: border-box;
+    transition: transform .2s;
+    z-index: 1;
+    overflow: hidden;
+  }
+  a.social:hover,
+  a.username:hover .social {
+    transform: scale(1.1);
+  }
+  .social-instagram {
+    background-image: radial-gradient(circle at 20% 100%, #F9D773, #F5AB3F, #F05431, #DD1D4F, #AA128D, #3D3CE2);
+  }
+  .social-replit .ball {
+    border-width: 10px;
+  }
+  .social-jsperf {
+    background-image: linear-gradient(#6ca5dd, #1a6ab9);
+  }
+  .social-piskel {
+    background-image: linear-gradient(-90deg, black, transparent),
+      linear-gradient(#2A6FFF 0%, #2A6FFF 33.3%, #00EE00 33.3%, #00EE00 66.7%,
+      #FF0000 66.7%, #FF0000 100%);
+  }
+  .social-devpost {
+    background-image: linear-gradient(90deg, #3ACCE6 20%, transparent 20%, transparent 80%, #3ACCE6 80%);
+  }
+  .social-gmaps::before,
+  .social-gmaps::after {
+    content: '';
+    display: block;
+    position: absolute;
+    top: -100%;
+    bottom: -100%;
+    left: 0;
+    right: 0;
+    margin: 0 auto;
+    // 100% * sqrt(2) / 3, a third of the diagonal
+    width: calc(100% * 1.4142135623730951 / 3);
+    z-index: -1;
+    transform: rotate(45deg);
+  }
+  .social-gmaps::before {
+    background-image: linear-gradient(#1B73E8 50%, #EA4336 50%);
+    transform: rotate(45deg) translateX(-100%);
+  }
+  .social-gmaps::after {
+    background-image: linear-gradient(#4285F4 50%, #FABD05 50%);
+  }
+  .social-tiktok .ball {
+    box-shadow: 3px 0 0 #FE2B54, -3px 0 0 #22F5ED, inset 3px 0 0 #FE2B54, inset -3px 0 0 #22F5ED;
+  }
+  .social-leetcode .ball {
+    border-color: #FFA115;
+    border-left-color: black;
+    border-right-color: white;
+  }
+  .social-leetcode .ball::after {
+    content: '';
+    display: block;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    padding: 0 2.5px;
+    height: 5px;
+    background-color: #B3B3B3;
+    border-radius: 5px;
+    margin: -2.5px;
+    // box-shadow: 0 0 0 3px white;
+  }
+}
+$bg: "";
+@if map.get($social, 'bg') {
+  $bg: "background-color:#{map.get($social, 'bg')}";
+}
+$ball-type: "social";
+@if $extra-class {
+  $ball-type: "#{$ball-type} #{$extra-class}";
+}
+@if map.get($social, 'type') {
+  $ball-type: "#{$ball-type} social-#{map.get($social, 'type')}";
+}
+$link: "";
+@if not $type {
+  $type: "span";
+}
+@if $type == "a" {
+  $link: map.get($social, 'link');
+}
+$name: map.get($social, 'name');
+#{$type}.#{$ball-type}[href="#{$link}"][style="#{$bg}"][title="#{$name}"][aria-label="#{$name}"] {
+  css {
+    .ball {
+      position: absolute;
+      width: 50%;
+      height: 50%;
+      margin: 25%;
+      border-radius: 50%;
+      background-color: white;
+      border: 5px solid transparent;
+      box-sizing: border-box;
+      transition: all .2s;
+    }
+    a.social:hover .ball,
+    a.username:hover .ball {
+      transform: scale(1.2);
+    }
+    .border-ball {
+      border-color: white;
+      background-color: transparent;
+    }
+  }
+  $class: "ball";
+  $border: "";
+  @if map.get($social, 'border') {
+    $class: "ball border-ball";
+    $border: "border-color:#{map.get($social, 'border')};";
+  }
+  $ball: "";
+  @if map.get($social, 'ball') {
+    $ball: "background-color:#{map.get($social, 'ball')}";
+    @if map.get($social, 'ball') == "border" {
+      $ball: "";
+      $class: "ball border-ball";
+    }
+  }
+  span.#{$class}[style="#{$border}#{$ball}"] {}
+
+  css {
+    .social-name {
+      display: none;
+    }
+  }
+  span.social-name {
+    content: "#{$name}";
+  }
+}

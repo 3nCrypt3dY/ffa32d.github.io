@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>UCSD 2026 animated logo</title>
+    <meta name="description" content="hhh" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" type="text/css" href="/sheep3.css" />
+
+    <script
+      src="https://cdn.jsdelivr.net/npm/dat.gui@0.7.7/build/dat.gui.min.js"
+      charset="utf-8"
+    ></script>
+    <script
+      src="https://sheeptester.github.io/javascripts/easing.js"
+      charset="utf-8"
+    ></script>
+    <script src="/sheep3.js" charset="utf-8"></script>
+
+    <style>
+      @import url('https://www.ucsd.edu/_resources/css/vendor/brix_sans.css');
+      @import url('https://sheeptester.github.io/sheep-sim/src/css/common.css');
+      @import url('https://sheeptester.github.io/sheep-sim/src/css/canvas.css');
+
+      body {
+        justify-content: center;
+        align-items: center;
+        background-image: radial-gradient(circle at 50% 50%, #e2e2e2, #8e8e8e);
+      }
+
+      #canvas-wrapper {
+        width: 500px;
+        height: 500px;
+        overflow: hidden;
+      }
+      #canvas-wrapper.server-icon {
+        width: 48px;
+        height: 48px;
+        border-radius: 10px;
+      }
+      #canvas-wrapper.circle {
+        border-radius: 50%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="canvas-wrapper"></div>
+    <button id="download">Download</button>
+    <script type="module">
+      import { WindowResizeListener } from 'https://sheeptester.github.io/sheep-sim/src/view/window-resize-listener.mjs'
+      import { Canvas } from 'https://sheeptester.github.io/sheep-sim/src/view/canvas.mjs'
+      import { Animator } from 'https://sheeptester.github.io/sheep-sim/src/view/animator.mjs'
+      import { Vector2 } from 'https://sheeptester.github.io/sheep-sim/src/utils/vector2.mjs'
+      const { easeInOutCubic, easeInCubic, easeOutCubic } = Easing
+
+      // NOTES for programmatic animation
+      // - It's hard to think in terms of events, unfortunately. I prefer
+      //   thinking in terms of parts.
+      //   - I could define the name of parts then refer to the start/end. For
+      //     example, the crewmate only really shows during amongus, so I could
+      //     say it comes in at amongus-start and leaves amongus-end, but those
+      //     are aliases with ucsd-end and 2026-start, respectively.
+      // - It should be easier to schedule staggered animations within a
+      //   transition
+      //   - Currently, I'm using percentages of the [0, 1] transition times.
+      //   - [0, 1] normalization probably isn't necessary for those transition
+      //     times since I'm going to interpolate them with easing functions
+      //     anyways. They should probably stay as milliseconds so I can define
+      //     subparts of a transition in terms of milliseconds.
+      //   - Maybe if a transition has multiple parts it should be defined in an
+      //     array and given to Timings.component.
+      // - inTime probably should go from 1 to 0 as most of the time, I like to
+      //   think of the before-transition state as being zero during normalcy
+      // - Thinking in terms of components and their lifetimes reminds me of
+      //   Hitfilm's composite shot layers (probably something similar for
+      //   Adobe)
+      // - A playhead for previewing a certain moment or portion of time would
+      //   be nice
+
+      class ImitationCanvas {
+        constructor ({
+          canvas = document.createElement('canvas'),
+          size = new Vector2()
+        } = {}) {
+          this.canvas = canvas
+          this.canvas.width = size.x
+          this.canvas.height = size.y
+          this.context = canvas.getContext('2d')
+          canvas.classList.add('canvas')
+
+          this.position = new Vector2()
+          this.size = size
+        }
+      }
+
+      function loadImage (url) {
+        return new Promise((resolve, reject) => {
+          const image = new Image()
+          image.addEventListener('load', () => resolve(image))
+          image.addEventListener('error', reject)
+          image.src = url
+        })
+      }
+
+      function download (filename, content) {
+        const url = URL.createObjectURL(content)
+        const saveLink = Object.assign(document.createElement('a'), {
+          href: url,
+          download: filename
+        })
+        document.body.append(saveLink)
+        saveLink.click()
+        URL.revokeObjectURL(url)
+        saveLink.remove()
+      }
+
+      // Seeded random
+      // https://github.com/bryc/code/blob/master/jshash/PRNGs.md#mulberry32
+      const mulberry32 = seed => () => {
+        seed |= 0
+        seed = (seed + 0x6d2b79f5) | 0
+        let temp = Math.imul(seed ^ (seed >>> 15), 1 | seed)
+        temp = (temp + Math.imul(temp ^ (temp >>> 7), 61 | temp)) ^ temp
+        return ((temp ^ (temp >>> 14)) >>> 0) / 4294967296
+      }
+
+      const canvas = new Canvas().setWrapper(
+        document.getElementById('canvas-wrapper')
+      )
+      const animator = new Animator()
+      const resizeListener = new WindowResizeListener({ resizers: [canvas] })
+
+      const gifOptions = {
+        FPS: 50,
+        SIZE: 300,
+        MP4: false
+      }
+
+      class Timings {
+        duration = 0
+        events = {}
+
+        /** Marks an event at the current time. Mutates object, chainable. */
+        event (id) {
+          const event = { id, time: this.duration }
+          this.events[id] = event
+          return this
+        }
+
+        /** Adds to the current time. Mutates object, chainable. */
+        then (time) {
+          this.duration += time
+          return this
+        }
+
+        #between (time, start, end) {
+          if (start <= end) {
+            return start < time && time < end
+          } else {
+            // end < start
+            return time > start || time < end
+          }
+        }
+
+        #difference (start, end) {
+          if (start < end) {
+            return end - start
+          } else {
+            return end + (this.duration - start)
+          }
+        }
+
+        #addTime (time, offset = 0) {
+          return (
+            (((time + offset) % this.duration) + this.duration) % this.duration
+          )
+        }
+
+        component (time, { enter, exit, render }) {
+          const enterTime = this.#addTime(
+            this.events[enter.at].time,
+            enter.offset
+          )
+          const exitTime = this.#addTime(this.events[exit.at].time, exit.offset)
+          // This math will probably die with certain numbers
+          if (this.#between(time, enterTime, exitTime + exit.for)) {
+            const transitioning = this.#between(
+              time,
+              enterTime,
+              enterTime + enter.for
+            )
+              ? 'in'
+              : this.#between(time, exitTime, exitTime + exit.for)
+              ? 'out'
+              : null
+            render({
+              totalTime:
+                this.#difference(enterTime, time) /
+                this.#difference(enterTime, exitTime),
+              inTime:
+                transitioning === 'in'
+                  ? this.#difference(enterTime, time) / enter.for
+                  : 1,
+              outTime:
+                transitioning === 'out'
+                  ? this.#difference(exitTime, time) / exit.for
+                  : 0,
+              transitioning,
+              getTransition: (eventId, duration) => {
+                const event = this.events[eventId].time
+                const transitioning = this.#between(
+                  time,
+                  event,
+                  event + duration
+                )
+                return {
+                  time: transitioning
+                    ? this.#difference(event, time) / duration
+                    : time === event || this.#between(time, enterTime, event)
+                    ? 0
+                    : 1,
+                  transitioning
+                }
+              }
+            })
+          }
+        }
+      }
+
+      const timings = new Timings()
+        .event('to-ucsd')
+        .then(2000)
+        .event('to-amogus')
+        .then(3000)
+        .event('to-2026')
+        .then(2500)
+
+      const SIZE = 500
+
+      class Animation {
+        static #TRIDENT = {
+          GAP: 21,
+          WIDTH: 102,
+          SHORTER: 432.5,
+          LONGER: 578.5
+        }
+
+        canvas
+        images
+        #gradient
+        #shadowDeferred = []
+        #tempContext
+
+        constructor (canvas, images) {
+          this.canvas = canvas
+          this.images = images
+          this.#tempContext = document.createElement('canvas').getContext('2d')
+        }
+
+        #textParts (substrings) {
+          const parts = []
+          let x = 0
+          for (const substring of substrings) {
+            const { content, scale } =
+              typeof substring === 'string'
+                ? { content: substring, scale: 1 }
+                : substring
+            const width = this.canvas.context.measureText(content).width * scale
+            parts.push({
+              content,
+              x,
+              width: scale < 1 ? width : null
+            })
+            x += width
+          }
+          return {
+            width: x,
+            parts
+          }
+        }
+
+        #shadow (opacity, render) {
+          this.canvas.context.shadowBlur = 60
+          while (opacity > 0) {
+            this.canvas.context.shadowColor = `rgba(0, 0, 0, ${Math.min(
+              opacity,
+              1
+            )})`
+            render()
+            opacity--
+          }
+          this.canvas.context.shadowColor = 'transparent'
+          this.#shadowDeferred.push(render)
+        }
+
+        draw (time) {
+          const { canvas, images } = this
+          const { context: c } = canvas
+          c.save()
+          c.scale(...canvas.size.clone().scale(1 / SIZE))
+          c.fillStyle = 'black'
+          c.fillRect(0, 0, SIZE, SIZE)
+
+          // Gradient background
+          timings.component(time, {
+            enter: { at: 'to-2026', for: 1500, offset: -500 },
+            exit: { at: 'to-amogus', for: 800, offset: 400 },
+            render: ({ inTime, outTime, transitioning }) => {
+              const y =
+                transitioning === 'in'
+                  ? (1 - easeInOutCubic(inTime)) * -3 * SIZE
+                  : easeInOutCubic(outTime) * -3 * SIZE
+              const gradient = canvas.context.createLinearGradient(
+                0,
+                y,
+                0,
+                y + SIZE * 2
+              )
+              gradient.addColorStop(0, '#00619A')
+              gradient.addColorStop(0.5, '#143356')
+              gradient.addColorStop(1, 'black')
+              c.fillStyle = gradient
+              c.fillRect(0, 0, SIZE, SIZE)
+              c.strokeRect(0, 0, SIZE, SIZE)
+            }
+          })
+
+          // Space stars
+          timings.component(time, {
+            enter: { at: 'to-amogus', for: 1000, offset: 250 },
+            exit: { at: 'to-2026', for: 1000, offset: -250 },
+            render: ({ totalTime, inTime, outTime, transitioning }) => {
+              const STAR_COUNT = 30
+              const MOVEMENT = 100
+              const random = mulberry32(0x533d_0)
+              c.fillStyle = 'white'
+              c.beginPath()
+              for (let i = 0; i < STAR_COUNT; i++) {
+                const radius = random() * 2 + 1
+                const x =
+                  random() * (SIZE + MOVEMENT) +
+                  (MOVEMENT * (totalTime - 1) * radius) / 3
+                const y =
+                  random() * SIZE +
+                  (1 - easeOutCubic(inTime) + easeInCubic(outTime)) *
+                    SIZE *
+                    radius
+                c.moveTo(x, y + radius)
+                c.arc(x, y, radius, 0, Math.PI * 2)
+              }
+              c.fill()
+            }
+          })
+
+          // Trident
+          timings.component(time, {
+            enter: { at: 'to-2026', for: 1000, offset: 500 },
+            exit: { at: 'to-amogus', for: 1000 },
+            render: ({ inTime, outTime, transitioning }) => {
+              const T = Animation.#TRIDENT
+              c.save()
+              c.translate(SIZE, SIZE)
+              c.rotate(-Math.PI / 4)
+              c.scale(1, -1)
+              c.fillStyle = '#FFCD00'
+              const GROWTH_TIME = 0.4
+              const OUT_TIME = (1 - GROWTH_TIME) / 3
+              const DIFF_TIME = 0.1
+              const growth =
+                (outTime < GROWTH_TIME
+                  ? easeInCubic(outTime / GROWTH_TIME)
+                  : 1) * 250
+              const diameter = Math.SQRT2 * SIZE
+              c.beginPath()
+              c.rect(
+                -T.WIDTH / 2,
+                outTime > 1 - DIFF_TIME
+                  ? diameter
+                  : outTime > GROWTH_TIME + DIFF_TIME
+                  ? easeInCubic(
+                      (outTime - GROWTH_TIME - DIFF_TIME) / OUT_TIME
+                    ) * diameter
+                  : 0,
+                T.WIDTH,
+                T.LONGER + growth
+              )
+              c.rect(
+                -T.WIDTH * 1.5 - T.GAP,
+                outTime > 1 - DIFF_TIME * 2
+                  ? diameter
+                  : outTime > GROWTH_TIME
+                  ? easeInCubic((outTime - GROWTH_TIME) / OUT_TIME) * diameter
+                  : 0,
+                T.WIDTH,
+                T.SHORTER + growth
+              )
+              c.rect(
+                T.WIDTH / 2 + T.GAP,
+                outTime > GROWTH_TIME + DIFF_TIME * 2
+                  ? easeInCubic(
+                      (outTime - GROWTH_TIME - DIFF_TIME * 2) / OUT_TIME
+                    ) * diameter
+                  : 0,
+                T.WIDTH,
+                T.SHORTER + growth
+              )
+              c.clip()
+              const radius = Math.SQRT2 * SIZE * easeOutCubic(inTime)
+              c.beginPath()
+              c.moveTo(0, radius)
+              c.arc(0, 0, radius, 0, Math.PI * 2)
+              c.fill()
+              c.restore()
+            }
+          })
+
+          c.fillStyle = 'white'
+
+          // 2026
+          timings.component(time, {
+            enter: { at: 'to-2026', for: 1000, offset: 0 },
+            exit: { at: 'to-amogus', for: 500, offset: 200 },
+            render: ({ inTime, outTime, transitioning, getTransition }) => {
+              const inState = 1 - easeInOutCubic(inTime)
+              const transition = getTransition('to-ucsd', 700)
+              const fontTime = easeInOutCubic(transition.time)
+              const fontSize = 190 - fontTime * 100 + inState * 100
+              c.font = `${fontSize}px 'BrixSansBold'`
+              const { width: origWidth, parts } = this.#textParts([...'2026'])
+              const spacing = inState * SIZE
+              const totalWidth = origWidth + spacing * (parts.length - 1)
+              const centerX = SIZE / 2 - totalWidth / 2
+              const startX =
+                centerX + fontTime * (SIZE - 30 - totalWidth - centerX)
+              const y = 342 + fontTime * 30 + inState * 400
+              const LETTER_DIFF = 0.1
+              for (const [i, { content, x }] of parts.entries()) {
+                const textY =
+                  y -
+                  (outTime < i * LETTER_DIFF
+                    ? 0
+                    : outTime < 1 - (3 - i) * LETTER_DIFF
+                    ? easeInCubic(
+                        (outTime - LETTER_DIFF * i) / (1 - LETTER_DIFF * 4)
+                      )
+                    : 1) *
+                    (y + 70)
+                this.#shadow(200 / fontSize, () => {
+                  c.font = `${fontSize}px 'BrixSansBold'`
+                  c.fillText(content, startX + x + i * spacing, textY)
+                })
+              }
+            }
+          })
+
+          // UC SAN DIEGO / UCSD
+          timings.component(time, {
+            enter: { at: 'to-2026', for: 1000, offset: 1000 },
+            exit: { at: 'to-amogus', for: 500 },
+            render: ({ inTime, outTime, transitioning, getTransition }) => {
+              const transition = getTransition('to-ucsd', 700)
+              const GROW_TIME = 0.15
+              const fontTime =
+                transition.time > GROW_TIME
+                  ? easeInOutCubic(
+                      (transition.time - GROW_TIME) / (1 - GROW_TIME)
+                    )
+                  : 0
+              const fontSize = 66 + fontTime * 120
+              const y = 201 + fontTime * 90
+
+              this.#tempContext.canvas.width = this.canvas.size.x
+              this.#tempContext.canvas.height = this.canvas.size.y
+              this.#tempContext.scale(
+                ...this.canvas.size.clone().scale(1 / SIZE)
+              )
+              this.#tempContext.fillStyle = 'white'
+              this.#tempContext.font = `${fontSize}px 'BrixSansBold'`
+              // for this.#textParts
+              c.font = `${fontSize}px 'BrixSansBold'`
+
+              if (transitioning !== 'in') {
+                const scale =
+                  transition.time < 1 - GROW_TIME
+                    ? easeInOutCubic(1 - transition.time / (1 - GROW_TIME))
+                    : 0
+                const { width: totalWidth, parts } = this.#textParts([
+                  'U',
+                  'C',
+                  { content: ' ', scale },
+                  'S',
+                  { content: 'AN ', scale },
+                  'D',
+                  { content: 'IEGO', scale }
+                ])
+                const LETTER_DIFF = 0.1
+                let i = 0
+                for (const { content, x, width } of parts) {
+                  if (width === 0) continue
+                  const textX = SIZE / 2 + x - totalWidth / 2
+                  const textY =
+                    y -
+                    (outTime < i * LETTER_DIFF
+                      ? 0
+                      : outTime < 1 - (3 - i) * LETTER_DIFF
+                      ? easeInCubic(
+                          (outTime - LETTER_DIFF * i) / (1 - LETTER_DIFF * 4)
+                        )
+                      : 1) *
+                      (y + 60)
+                  i++
+                  if (width !== null) {
+                    this.#tempContext.save()
+                    this.#tempContext.beginPath()
+                    this.#tempContext.rect(
+                      textX,
+                      textY - fontSize,
+                      width,
+                      textY
+                    )
+                    this.#tempContext.clip()
+                  }
+                  this.#tempContext.fillText(content, textX, textY)
+                  if (width !== null) {
+                    this.#tempContext.restore()
+                  }
+                }
+              } else {
+                const { width: totalWidth, parts } = this.#textParts([
+                  'U',
+                  'C ',
+                  'S',
+                  'A',
+                  'N ',
+                  'D',
+                  'I',
+                  'E',
+                  'G',
+                  'O'
+                ])
+                const TRANSIT_TIME = 0.4
+                const WAIT_PER_LETTER = (1 - TRANSIT_TIME) / parts.length
+                const startX = SIZE / 2 - totalWidth / 2
+                for (const [i, { content, x }] of parts.entries()) {
+                  const letterTime =
+                    inTime > WAIT_PER_LETTER * i + TRANSIT_TIME
+                      ? 0
+                      : inTime < WAIT_PER_LETTER * i
+                      ? 1
+                      : 1 -
+                        easeOutCubic(
+                          (inTime - WAIT_PER_LETTER * i) / TRANSIT_TIME
+                        )
+                  this.#tempContext.save()
+                  this.#tempContext.transform(
+                    1,
+                    0,
+                    letterTime * -1,
+                    1,
+                    startX + x + letterTime * (SIZE + 60),
+                    y
+                  )
+                  this.#tempContext.fillText(content, 0, 0)
+                  this.#tempContext.restore()
+                }
+              }
+              this.#shadow(200 / fontSize, () => {
+                c.drawImage(this.#tempContext.canvas, 0, 0, SIZE, SIZE)
+              })
+            }
+          })
+
+          // Amogus text
+          timings.component(time, {
+            enter: { at: 'to-amogus', for: 0, offset: 1000 },
+            exit: { at: 'to-2026', for: 700, offset: -200 },
+            render: ({ totalTime, outTime }) => {
+              const TEXT = 'UC San Diego Timely Warning'
+              c.font = '20px Arial'
+              c.textAlign = 'center'
+              c.fillStyle = 'white'
+              c.fillText(
+                TEXT.slice(0, TEXT.length * (totalTime / 0.8) + 1),
+                SIZE / 2,
+                150 + easeInCubic(outTime) * 400
+              )
+            }
+          })
+
+          // Crewmate
+          timings.component(time, {
+            enter: { at: 'to-amogus', for: 500, offset: 700 },
+            exit: { at: 'to-2026', for: 700, offset: -300 },
+            render: ({
+              totalTime,
+              inTime,
+              outTime,
+              transitioning,
+              getTransition
+            }) => {
+              const RATIO =
+                this.images.crewmate.height / this.images.crewmate.width
+              const size = 200
+              c.save()
+              c.translate(
+                50 + totalTime * 200,
+                SIZE -
+                  (100 + totalTime * 100 - (1 - easeOutCubic(inTime)) * 200) +
+                  easeInCubic(outTime) * 400
+              )
+              c.rotate(totalTime * (Math.PI / 10))
+              c.drawImage(
+                this.images.crewmate,
+                -size / 2,
+                -(size * RATIO) / 2,
+                size,
+                size * RATIO
+              )
+              c.restore()
+            }
+          })
+
+          for (const render of this.#shadowDeferred) {
+            render()
+          }
+          this.#shadowDeferred = []
+
+          c.restore()
+        }
+      }
+
+      async function main () {
+        const options = { speed: 1, serverIcon: false, circle: false }
+        const images = {
+          crewmate: await loadImage('./crewmate.webp')
+        }
+        const animation = new Animation(canvas, images)
+        function render () {
+          const now = Date.now() * options.speed
+          // const time =
+          //   (now %
+          //     (timings.events['to-2026'].time +
+          //       1000 -
+          //       timings.events['to-amogus'].time)) +
+          //   timings.events['to-amogus'].time
+          const time = now % timings.duration
+          animation.draw(time)
+        }
+        animator.renderers.push({ render })
+
+        await resizeListener.listen().resizeNow()
+        animator.start()
+
+        const gui = new dat.GUI()
+        gui.add(options, 'speed', 0, 5)
+        const gifOptionsFolder = gui.addFolder('GIF options')
+        for (const key of Object.keys(gifOptions)) {
+          gifOptionsFolder.add(gifOptions, key)
+        }
+        gui.add(options, 'serverIcon').onChange(() => {
+          if (options.serverIcon) {
+            canvas.wrapper.classList.add('server-icon')
+          } else {
+            canvas.wrapper.classList.remove('server-icon')
+          }
+        })
+        gui.add(options, 'circle').onChange(() => {
+          if (options.circle) {
+            canvas.wrapper.classList.add('circle')
+          } else {
+            canvas.wrapper.classList.remove('circle')
+          }
+        })
+
+        const downloadBtn = document.getElementById('download')
+        downloadBtn.addEventListener('click', async e => {
+          downloadBtn.disabled = true
+          const dummyCanvas = new ImitationCanvas({
+            size: new Vector2(gifOptions.SIZE, gifOptions.SIZE)
+          })
+          const animation = new Animation(dummyCanvas, images)
+          const frameDelay = 1000 / gifOptions.FPS
+          if (gifOptions.MP4) {
+            if (!('SharedArrayBuffer' in window)) {
+              downloadBtn.disabled = false
+              alert(
+                "SharedArrayBuffer isn't available. Reload the page and try again. If it still doesn't work, then I guess you can't download an mp4."
+              )
+              return
+            }
+            await import(
+              'https://unpkg.com/@ffmpeg/ffmpeg@0.9.5/dist/ffmpeg.min.js'
+            )
+            const { createFFmpeg, fetchFile } = FFmpeg
+            const ffmpeg = createFFmpeg({ log: true })
+            await ffmpeg.load()
+            let frame = 0
+            for (let i = 0; i < timings.duration; i += frameDelay) {
+              animation.draw(i)
+              const blob = await new Promise(resolve => {
+                dummyCanvas.canvas.toBlob(resolve, 'image/png')
+              })
+              ffmpeg.FS('writeFile', `frame${frame}.png`, await fetchFile(blob))
+              frame++
+            }
+            await ffmpeg.run(
+              '-r',
+              gifOptions.FPS + '',
+              '-i',
+              `frame%d.png`,
+              'output.mp4'
+            )
+            const data = ffmpeg.FS('readFile', 'output.mp4')
+            download(
+              'ucsd26.mp4',
+              new Blob([data.buffer], { type: 'video/mp4' })
+            )
+            downloadBtn.disabled = false
+          } else {
+            const gif = new GIF({
+              workerScript: './gif-worker.js',
+              width: gifOptions.SIZE,
+              height: gifOptions.SIZE
+            })
+            gif.on('finished', blob => {
+              download('ucsd26.gif', blob)
+              animator.start()
+              downloadBtn.disabled = false
+            })
+            for (let i = 0; i < timings.duration; i += frameDelay) {
+              animation.draw(i)
+              gif.addFrame(dummyCanvas.context, {
+                delay: frameDelay,
+                copy: true
+              })
+            }
+            gif.render()
+          }
+        })
+      }
+
+      main()
+
+      navigator.serviceWorker.register('./sw.js')
+
+      // Debug
+      Object.assign(window, {
+        mulberry32
+      })
+    </script>
+  </body>
+</html>
